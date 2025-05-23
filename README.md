@@ -32,7 +32,7 @@ use io_stream::{coroutines::Read, runtimes::std::handle};
 let mut stdin = std::io::stdin();
 
 let mut arg = None;
-let mut read = Read::new(&mut buffer);
+let mut read = Read::new();
 
 let output = loop {
     match read.resume(arg) {
@@ -54,7 +54,7 @@ use io_stream::{coroutines::Write, runtimes::tokio::handle};
 let mut tcp = TcpStream::connect("127.0.0.1:1234").await.unwrap();
 
 let mut arg = None;
-let mut write = Write::new(b"bytes".to_vec());
+let mut write = Write::new(b"bytes".iter().cloned());
 
 while let Err(io) = write.resume(arg) {
     arg = Some(handle(&mut tcp, io).await.unwrap());
@@ -67,7 +67,12 @@ Have a look at projects built on the top of this library:
 
 - [io-starttls](https://github.com/pimalaya/io-starttls): I/O-free coroutine to upgrade any plain stream to a secure one
 - [io-timer](https://github.com/pimalaya/io-timer): Set of I/O-free coroutines to manage timers
+- [io-http](https://github.com/pimalaya/io-http): Set of I/O-free Rust coroutines to manage HTTP streams
+- [io-oauth](https://github.com/pimalaya/io-oauth): Set of I/O-free Rust coroutines to manage OAuth flows
+- [io-addressbook](https://github.com/pimalaya/io-addressbook): Set of I/O-free coroutines to manage contacts
 - [comodoro](https://github.com/pimalaya/comodoro): CLI to manage timers
+- [cardamum](https://github.com/pimalaya/cardamum): CLI to manage contacts
+- [ortie](https://github.com/pimalaya/ortie): CLI to manage OAuth access tokens
 
 ## Sponsoring
 

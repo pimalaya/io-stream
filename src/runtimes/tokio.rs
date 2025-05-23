@@ -2,7 +2,7 @@
 
 use std::io;
 
-use log::debug;
+use log::trace;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{Io, Output};
@@ -13,14 +13,7 @@ use crate::{Io, Output};
 /// standard module [`std::io`] to process stream [`Io`].
 pub async fn handle(stream: impl AsyncRead + AsyncWrite + Unpin, io: Io) -> io::Result<Io> {
     match io {
-        Io::UnavailableInput => {
-            let kind = io::ErrorKind::InvalidInput;
-            Err(io::Error::new(kind, "input has already been used"))
-        }
-        Io::UnexpectedInput(io) => {
-            let kind = io::ErrorKind::InvalidInput;
-            Err(io::Error::new(kind, format!("unexpected input: {io:?}")))
-        }
+        Io::Error(err) => Err(io::Error::new(io::ErrorKind::Other, err)),
         Io::Read(io) => read(stream, io).await,
         Io::Write(io) => write(stream, io).await,
     }
@@ -32,10 +25,10 @@ pub async fn read(
 ) -> io::Result<Io> {
     let Err(mut buffer) = input else {
         let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "missing read buffer"));
+        return Err(io::Error::new(kind, "Missing read buffer"));
     };
 
-    debug!("read chunk of bytes asynchronously");
+    trace!("reading bytes asynchronously");
     let bytes_count = stream.read(&mut buffer).await?;
 
     let output = Output {
@@ -52,10 +45,10 @@ pub async fn write(
 ) -> io::Result<Io> {
     let Err(buffer) = input else {
         let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "missing write bytes"));
+        return Err(io::Error::new(kind, "Missing write bytes"));
     };
 
-    debug!("write bytes asynchronously");
+    trace!("writing bytes asynchronously");
     let bytes_count = stream.write(&buffer).await?;
 
     let output = Output {

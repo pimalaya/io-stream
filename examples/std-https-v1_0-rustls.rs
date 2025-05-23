@@ -26,7 +26,14 @@ fn main() {
 
     let mut stream = connect(&url);
 
-    let request = format!("GET {} HTTP/1.0\r\n\r\n", url.path());
+    let request = format!(
+        "GET {} HTTP/1.0\r\nHost: {}:{}\r\n\r\n",
+        url.path(),
+        url.host_str().unwrap(),
+        url.port_or_known_default().unwrap(),
+    );
+
+    println!("request: {request:?}");
 
     let mut arg = None;
     let mut write = Write::new(request.into_bytes());
@@ -39,7 +46,7 @@ fn main() {
 
     loop {
         let mut arg = None;
-        let mut read = Read::new(vec![0; 1024]);
+        let mut read = Read::new();
 
         let output = loop {
             match read.resume(arg) {

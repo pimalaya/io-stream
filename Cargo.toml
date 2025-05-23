@@ -1,8 +1,9 @@
 [package]
 name = "io-stream"
 description = "Set of I/O-free coroutines and runtimes to manage streams"
-version = "1.0.0"
+version = "0.0.1"
 authors = ["soywod <clement.douin@posteo.net>"]
+rust-version = "1.56"
 edition = "2021"
 license = "MIT"
 categories = ["api-bindings"]
