@@ -39,7 +39,7 @@ fn main() {
 
     loop {
         let mut arg = None;
-        let mut read = Read::new(vec![0; 1024]);
+        let mut read = Read::new();
 
         let output = loop {
             match read.resume(arg) {

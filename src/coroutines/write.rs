@@ -11,7 +11,7 @@ pub struct Write {
 }
 
 impl Write {
-    /// Creates a new coroutine from the given buffer reference.
+    /// Creates a new coroutine to write the given bytes.
     pub fn new(bytes: impl IntoIterator<Item = u8>) -> Self {
         let bytes: Vec<u8> = bytes.into_iter().collect();
         let n = bytes.len();
@@ -20,6 +20,7 @@ impl Write {
         Self { bytes }
     }
 
+    /// Replaces the inner bytes with the given one.
     pub fn replace(&mut self, bytes: impl IntoIterator<Item = u8>) {
         *self = Self::new(bytes);
     }
@@ -37,29 +38,27 @@ impl Write {
         }
     }
 
-    /// Makes the coroutine progress.
-    pub fn resume(&mut self, input: Option<Io>) -> Result<Output, Io> {
-        let Some(input) = input else {
-            return Err(match self.bytes.take() {
-                Some(bytes) => Io::Write(Err(bytes)),
-                None => Io::UnavailableInput,
-            });
+    /// Makes the write progress.
+    pub fn resume(&mut self, arg: Option<Io>) -> Result<Output, Io> {
+        let Some(arg) = arg else {
+            let Some(bytes) = self.bytes.take() else {
+                return Err(Io::err("write bytes not ready"));
+            };
+
+            debug!("break: need I/O to write bytes");
+            return Err(Io::Write(Err(bytes)));
         };
 
-        let Io::Write(output) = input else {
-            return Err(Io::UnexpectedInput(Box::new(input)));
+        debug!("resume after writting bytes");
+
+        let Io::Write(Ok(output)) = arg else {
+            let msg = format!("expected write output, got {arg:?}");
+            return Err(Io::err(msg));
         };
 
-        match output {
-            Ok(output) => {
-                let n = output.bytes_count;
-                debug!("resume after {n} bytes written");
-                Ok(output)
-            }
-            Err(io) => {
-                debug!("break: need I/O to write bytes");
-                Err(Io::Write(Err(io)))
-            }
-        }
+        let n = output.bytes_count;
+        debug!("wrote {n} bytes");
+
+        Ok(output)
     }
 }

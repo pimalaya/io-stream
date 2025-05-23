@@ -13,14 +13,7 @@ use crate::{Io, Output};
 /// standard module [`std::io`] to process stream [`Io`].
 pub async fn handle(stream: impl AsyncRead + AsyncWrite + Unpin, io: Io) -> io::Result<Io> {
     match io {
-        Io::UnavailableInput => {
-            let kind = io::ErrorKind::InvalidInput;
-            Err(io::Error::new(kind, "input has already been used"))
-        }
-        Io::UnexpectedInput(io) => {
-            let kind = io::ErrorKind::InvalidInput;
-            Err(io::Error::new(kind, format!("unexpected input: {io:?}")))
-        }
+        Io::Error(err) => Err(io::Error::new(io::ErrorKind::Other, err)),
         Io::Read(io) => read(stream, io).await,
         Io::Write(io) => write(stream, io).await,
     }
@@ -35,7 +28,7 @@ pub async fn read(
         return Err(io::Error::new(kind, "missing read buffer"));
     };
 
-    debug!("read chunk of bytes asynchronously");
+    debug!("reading bytes synchronously");
     let bytes_count = stream.read(&mut buffer).await?;
 
     let output = Output {
@@ -55,7 +48,7 @@ pub async fn write(
         return Err(io::Error::new(kind, "missing write bytes"));
     };
 
-    debug!("write bytes asynchronously");
+    debug!("writing bytes asynchronously");
     let bytes_count = stream.write(&buffer).await?;
 
     let output = Output {

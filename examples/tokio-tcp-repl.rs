@@ -35,7 +35,7 @@ async fn main() {
     stdout.write(b"\nReceived greeting:\n").await.unwrap();
 
     let mut arg = None;
-    let mut read = Read::new(vec![0; 1024]);
+    let mut read = Read::new();
 
     let greeting = loop {
         match read.resume(arg) {
@@ -66,7 +66,7 @@ async fn main() {
         }
 
         let mut arg = None;
-        let mut read = Read::default();
+        let mut read = Read::new();
 
         let response = loop {
             match read.resume(arg) {

@@ -1,3 +1,5 @@
+use std::fmt;
+
 /// The streams I/O request enum, emitted by [coroutines] and
 /// processed by [runtimes].
 ///
@@ -8,10 +10,16 @@
 /// [runtimes]: crate::runtimes
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Io {
-    UnavailableInput,
-    UnexpectedInput(Box<Io>),
+    Error(String),
     Read(Result<Output, Vec<u8>>),
     Write(Result<Output, Vec<u8>>),
+}
+
+impl Io {
+    pub fn err(message: impl fmt::Display) -> Io {
+        let message = format!("stream error: {message}");
+        Io::Error(message.to_string())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
