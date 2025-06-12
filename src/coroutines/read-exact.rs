@@ -1,8 +1,26 @@
+use std::mem;
+
 use log::{debug, trace};
+use thiserror::Error;
 
-use crate::Io;
+use crate::{coroutines::read::ReadResult, io::StreamIo};
 
-use super::Read;
+use super::read::{Read, ReadError};
+
+#[derive(Clone, Debug, Error)]
+pub enum ReadExactError {
+    #[error("Unexpected EOF, expected to read {0}/{1} more bytes")]
+    UnexpectedEof(usize, usize, Vec<u8>),
+    #[error(transparent)]
+    Read(#[from] ReadError),
+}
+
+#[derive(Clone, Debug)]
+pub enum ReadExactResult {
+    Ok(Vec<u8>),
+    Err(ReadExactError),
+    Io(StreamIo),
+}
 
 /// I/O-free coroutine for reading bytes into a buffer until it
 /// reaches a given amount of bytes.
@@ -11,11 +29,11 @@ pub struct ReadExact {
     /// The inner read coroutine.
     read: Read,
 
+    /// The buffer containing the final read bytes.
+    buffer: Vec<u8>,
+
     /// The exact amount of bytes to read.
     max: usize,
-
-    /// The buffer containing the read bytes.
-    buffer: Option<Vec<u8>>,
 }
 
 impl ReadExact {
@@ -30,50 +48,43 @@ impl ReadExact {
     /// Creates a new coroutine to read bytes using a buffer with the
     /// given capacity.
     pub fn with_capacity(capacity: usize, max: usize) -> Self {
-        Self {
-            read: Read::with_capacity(capacity.min(max)),
-            max,
-            buffer: Some(Vec::with_capacity(max)),
-        }
+        trace!("init coroutine for reading exactly {max} bytes (capacity: {capacity})");
+        let read = Read::with_capacity(capacity.min(max));
+        let buffer = Vec::with_capacity(max);
+        Self { read, buffer, max }
     }
 
-    /// Adds the given bytes the to inner buffer.
+    /// Extends the inner buffer with the given bytes slice.
     pub fn extend(&mut self, bytes: impl IntoIterator<Item = u8>) {
-        let Some(buffer) = &mut self.buffer else {
-            self.buffer.replace(bytes.into_iter().collect());
-            return;
-        };
-
-        buffer.extend(bytes);
+        self.buffer.extend(bytes);
     }
 
-    /// Makes the read progress.
-    pub fn resume(&mut self, mut arg: Option<Io>) -> Result<Vec<u8>, Io> {
+    pub fn resume(&mut self, mut arg: Option<StreamIo>) -> ReadExactResult {
         loop {
-            let Some(buffer) = &mut self.buffer else {
-                return Err(Io::err("read exact buffer not ready"));
-            };
-
-            if buffer.len() >= self.max {
-                // SAFETY: buffer exists due to check above
-                break Ok(self.buffer.take().unwrap());
+            if self.buffer.len() >= self.max {
+                let buffer = mem::take(&mut self.buffer);
+                break ReadExactResult::Ok(buffer);
             }
 
-            let remaining = self.max - buffer.len();
-            trace!("{remaining} remaining bytes to read");
+            let remaining = self.max - self.buffer.len();
+            debug!("{remaining} remaining bytes to read");
 
             if remaining < self.read.capacity() {
-                self.read = Read::with_capacity(remaining);
+                self.read.truncate(remaining);
             }
 
-            let output = self.read.resume(arg.take())?;
+            let output = match self.read.resume(arg.take()) {
+                ReadResult::Ok(output) => output,
+                ReadResult::Err(err) => break ReadExactResult::Err(err.into()),
+                ReadResult::Io(io) => break ReadExactResult::Io(io),
+                ReadResult::Eof => {
+                    let buffer = mem::take(&mut self.buffer);
+                    let err = ReadExactError::UnexpectedEof(remaining, self.max, buffer);
+                    break ReadExactResult::Err(err);
+                }
+            };
 
-            if output.bytes_count == 0 {
-                debug!("expected {remaining} more bytes, got unexpected EOF");
-                break Err(Io::err("Read 0 bytes, unexpected EOF?"));
-            }
-
-            buffer.extend(output.bytes());
+            self.buffer.extend(output.bytes());
             self.read.replace(output.buffer);
         }
     }
@@ -83,7 +94,10 @@ impl ReadExact {
 mod tests {
     use std::io::{BufReader, Read as _};
 
-    use crate::{Io, Output};
+    use crate::{
+        coroutines::read_exact::{ReadExactError, ReadExactResult},
+        io::{StreamIo, StreamOutput},
+    };
 
     use super::ReadExact;
 
@@ -98,16 +112,16 @@ mod tests {
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadExactResult::Ok(output) => break output,
+                ReadExactResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 
@@ -131,16 +145,16 @@ mod tests {
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadExactResult::Ok(output) => break output,
+                ReadExactResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 
@@ -160,25 +174,52 @@ mod tests {
         let mut reader = BufReader::new("abcdef".as_bytes());
 
         let mut read = ReadExact::with_capacity(5, 0);
-        read.extend(b"123".iter().cloned());
+        read.extend("123".as_bytes().to_vec());
 
         let mut arg = None;
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadExactResult::Ok(output) => break output,
+                ReadExactResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 
         assert_eq!(output, b"123");
+    }
+
+    #[test]
+    fn read_eof() {
+        let _ = env_logger::try_init();
+
+        let mut reader = BufReader::new("abcdef".as_bytes());
+
+        let mut read = ReadExact::new(8);
+        let mut arg = None;
+
+        loop {
+            match read.resume(arg.take()) {
+                ReadExactResult::Err(ReadExactError::UnexpectedEof(2, 8, output)) => {
+                    break assert_eq!(output, b"abcdef");
+                }
+                ReadExactResult::Io(StreamIo::Read(Err(mut buffer))) => {
+                    let bytes_count = reader.read(&mut buffer).unwrap();
+                    let output = StreamOutput {
+                        buffer,
+                        bytes_count,
+                    };
+                    arg = Some(StreamIo::Read(Ok(output)))
+                }
+                other => unreachable!("Unexpected result: {other:?}"),
+            }
+        }
     }
 }

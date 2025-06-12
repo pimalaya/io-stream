@@ -1,12 +1,28 @@
-use log::{debug, trace};
+use std::mem;
 
-use crate::{Io, Output};
+use log::{debug, trace};
+use thiserror::Error;
+
+use crate::io::{StreamIo, StreamOutput};
+
+#[derive(Clone, Debug, Error)]
+pub enum ReadError {
+    #[error("Invalid argument: expected {0}, got {1:?}")]
+    InvalidArgument(&'static str, StreamIo),
+}
+
+#[derive(Clone, Debug)]
+pub enum ReadResult {
+    Ok(StreamOutput),
+    Err(ReadError),
+    Io(StreamIo),
+    Eof,
+}
 
 /// I/O-free coroutine for reading bytes into a buffer.
 #[derive(Debug)]
 pub struct Read {
-    capacity: usize,
-    buffer: Option<Vec<u8>>,
+    buffer: Vec<u8>,
 }
 
 impl Read {
@@ -24,9 +40,9 @@ impl Read {
     /// Creates a new coroutine to read bytes using a buffer with the
     /// given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        debug!("create read buffer of {capacity} capacity");
-        let buffer = Some(vec![0; capacity]);
-        Self { capacity, buffer }
+        trace!("init coroutine for reading bytes (capacity: {capacity})");
+        let buffer = vec![0; capacity];
+        Self { buffer }
     }
 
     /// Returns the buffer capacity.
@@ -35,56 +51,48 @@ impl Read {
     /// buffer, it returns instead the initial capacity the coroutine
     /// was created with.
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.buffer.capacity()
     }
 
-    /// Shrinks the buffer to the given capacity.
-    pub fn shrink_to(&mut self, min_capacity: usize) {
-        if let Some(buffer) = &mut self.buffer {
-            buffer.shrink_to(min_capacity);
-            self.capacity = buffer.capacity();
-        } else {
-            self.capacity = min_capacity;
-        }
+    /// Shortens the buffer to the given length.
+    pub fn truncate(&mut self, len: usize) {
+        self.buffer.truncate(len);
+        self.buffer.shrink_to(len);
     }
 
     /// Replaces the inner buffer with the given one.
     pub fn replace(&mut self, mut buffer: Vec<u8>) {
-        let capacity = buffer.capacity();
-        trace!("replace read buffer with {capacity} capacity");
         buffer.fill(0);
-        self.buffer.replace(buffer);
-        self.capacity = capacity;
+        self.buffer = buffer;
     }
 
     /// Makes the read progress.
-    pub fn resume(&mut self, arg: Option<Io>) -> Result<Output, Io> {
+    pub fn resume(&mut self, arg: Option<StreamIo>) -> ReadResult {
         let Some(arg) = arg else {
-            let Some(buffer) = self.buffer.take() else {
-                return Err(Io::err("Read buffer not ready"));
-            };
-
-            trace!("break: need I/O to read bytes");
-            return Err(Io::Read(Err(buffer)));
+            let mut buffer = vec![0; self.buffer.capacity()];
+            mem::swap(&mut buffer, &mut self.buffer);
+            trace!("wants I/O to read bytes");
+            return ReadResult::Io(StreamIo::Read(Err(buffer)));
         };
 
         trace!("resume after reading bytes");
 
-        let Io::Read(io) = arg else {
-            let err = format!("Expected read output, got {arg:?}");
-            return Err(Io::err(err));
+        let StreamIo::Read(io) = arg else {
+            return ReadResult::Err(ReadError::InvalidArgument("read output", arg));
         };
 
         let output = match io {
             Ok(output) => output,
-            Err(buffer) => return Err(Io::Read(Err(buffer))),
+            Err(buffer) => return ReadResult::Io(StreamIo::Read(Err(buffer))),
         };
 
-        let n = output.bytes_count;
-        let capacity = output.buffer.capacity();
-        debug!("read {n}/{capacity} bytes");
-
-        Ok(output)
+        match output.bytes_count {
+            0 => ReadResult::Eof,
+            n => {
+                debug!("read {n}/{} bytes", output.buffer.capacity());
+                ReadResult::Ok(output)
+            }
+        }
     }
 }
 
@@ -98,7 +106,10 @@ impl Default for Read {
 mod tests {
     use std::io::{BufReader, Read as _};
 
-    use crate::{Io, Output};
+    use crate::{
+        coroutines::read::ReadResult,
+        io::{StreamIo, StreamOutput},
+    };
 
     use super::Read;
 
@@ -113,16 +124,16 @@ mod tests {
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadResult::Ok(output) => break output,
+                ReadResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 
@@ -132,16 +143,16 @@ mod tests {
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadResult::Ok(output) => break output,
+                ReadResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 
@@ -149,21 +160,19 @@ mod tests {
 
         read.replace(output.buffer);
 
-        let output = loop {
+        loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadResult::Eof => break,
+                ReadResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
-        };
-
-        assert_eq!(output.bytes_count, 0);
+        }
     }
 }

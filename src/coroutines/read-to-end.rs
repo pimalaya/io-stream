@@ -1,6 +1,17 @@
-use crate::Io;
+use std::mem;
 
-use super::read::Read;
+use log::trace;
+
+use crate::io::StreamIo;
+
+use super::read::{Read, ReadError, ReadResult};
+
+#[derive(Clone, Debug)]
+pub enum ReadToEndResult {
+    Ok(Vec<u8>),
+    Err(ReadError),
+    Io(StreamIo),
+}
 
 /// I/O-free coroutine for reading bytes into a buffer until it
 /// reaches EOF.
@@ -10,7 +21,7 @@ pub struct ReadToEnd {
     read: Read,
 
     /// The buffer containing the read bytes.
-    buffer: Option<Vec<u8>>,
+    buffer: Vec<u8>,
 }
 
 impl ReadToEnd {
@@ -25,36 +36,30 @@ impl ReadToEnd {
     /// Creates a new coroutine to read bytes using a buffer with the
     /// given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
+        trace!("init coroutine for reading until EOF (capacity: {capacity})");
         let read = Read::with_capacity(capacity);
-        let buffer = Some(Vec::with_capacity(capacity));
+        let buffer = Vec::with_capacity(capacity);
         Self { read, buffer }
     }
 
-    /// Adds the given bytes the to inner buffer.
+    /// Extends the inner buffer with the given bytes slice.
     pub fn extend(&mut self, bytes: impl IntoIterator<Item = u8>) {
-        let Some(buffer) = &mut self.buffer else {
-            self.buffer.replace(bytes.into_iter().collect());
-            return;
-        };
-
-        buffer.extend(bytes);
+        self.buffer.extend(bytes);
     }
 
-    /// Makes the read progress.
-    pub fn resume(&mut self, mut arg: Option<Io>) -> Result<Vec<u8>, Io> {
+    pub fn resume(&mut self, mut arg: Option<StreamIo>) -> ReadToEndResult {
         loop {
-            let output = self.read.resume(arg.take())?;
-
-            let Some(buffer) = &mut self.buffer else {
-                break Err(Io::err("read to end buffer not ready"));
+            let output = match self.read.resume(arg.take()) {
+                ReadResult::Ok(output) => output,
+                ReadResult::Err(err) => break ReadToEndResult::Err(err.into()),
+                ReadResult::Io(io) => break ReadToEndResult::Io(io),
+                ReadResult::Eof => {
+                    let buffer = mem::take(&mut self.buffer);
+                    break ReadToEndResult::Ok(buffer);
+                }
             };
 
-            if output.bytes_count == 0 {
-                // SAFETY: buffer exists due to check above
-                break Ok(self.buffer.take().unwrap());
-            }
-
-            buffer.extend(output.bytes());
+            self.buffer.extend(output.bytes());
             self.read.replace(output.buffer);
         }
     }
@@ -70,7 +75,10 @@ impl Default for ReadToEnd {
 mod tests {
     use std::io::{BufReader, Read as _};
 
-    use crate::{Io, Output};
+    use crate::{
+        coroutines::read_to_end::ReadToEndResult,
+        io::{StreamIo, StreamOutput},
+    };
 
     use super::ReadToEnd;
 
@@ -85,16 +93,16 @@ mod tests {
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadToEndResult::Ok(output) => break output,
+                ReadToEndResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 

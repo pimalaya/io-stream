@@ -4,50 +4,49 @@ use std::io::{self, Read, Write};
 
 use log::trace;
 
-use crate::{Io, Output};
+use crate::io::{StreamIo, StreamOutput};
 
 /// The main runtime I/O handler.
 ///
 /// This handler makes use of standard modules [`std::io`] to process
 /// stream [`Io`].
-pub fn handle(stream: impl Read + Write, io: Io) -> io::Result<Io> {
+pub fn handle(stream: impl Read + Write, io: StreamIo) -> io::Result<StreamIo> {
     match io {
-        Io::Error(err) => Err(io::Error::new(io::ErrorKind::Other, err)),
-        Io::Read(io) => read(stream, io),
-        Io::Write(io) => write(stream, io),
+        StreamIo::Read(io) => read(stream, io),
+        StreamIo::Write(io) => write(stream, io),
     }
 }
 
-pub fn read(mut stream: impl Read, input: Result<Output, Vec<u8>>) -> io::Result<Io> {
-    let Err(mut buffer) = input else {
-        let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "Missing read buffer"));
+pub fn read(mut stream: impl Read, input: Result<StreamOutput, Vec<u8>>) -> io::Result<StreamIo> {
+    let mut buffer = match input {
+        Ok(output) => return Ok(StreamIo::Read(Ok(output))),
+        Err(buffer) => buffer,
     };
 
     trace!("reading bytes synchronously");
     let bytes_count = stream.read(&mut buffer)?;
 
-    let output = Output {
+    let output = StreamOutput {
         buffer,
         bytes_count,
     };
 
-    Ok(Io::Read(Ok(output)))
+    Ok(StreamIo::Read(Ok(output)))
 }
 
-pub fn write(mut stream: impl Write, input: Result<Output, Vec<u8>>) -> io::Result<Io> {
-    let Err(buffer) = input else {
-        let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "Missing write bytes"));
+pub fn write(mut stream: impl Write, input: Result<StreamOutput, Vec<u8>>) -> io::Result<StreamIo> {
+    let bytes = match input {
+        Ok(output) => return Ok(StreamIo::Write(Ok(output))),
+        Err(bytes) => bytes,
     };
 
     trace!("writing bytes synchronously");
-    let bytes_count = stream.write(&buffer)?;
+    let bytes_count = stream.write(&bytes)?;
 
-    let output = Output {
-        buffer,
+    let output = StreamOutput {
+        buffer: bytes,
         bytes_count,
     };
 
-    Ok(Io::Write(Ok(output)))
+    Ok(StreamIo::Write(Ok(output)))
 }

@@ -7,12 +7,9 @@
 //! [`Io`]: crate::Io
 //! [runtimes]: crate::runtimes
 
-mod read;
+pub mod read;
 #[path = "read-exact.rs"]
-mod read_exact;
+pub mod read_exact;
 #[path = "read-to-end.rs"]
-mod read_to_end;
-mod write;
-
-#[doc(inline)]
-pub use self::{read::Read, read_exact::ReadExact, read_to_end::ReadToEnd, write::Write};
+pub mod read_to_end;
+pub mod write;
