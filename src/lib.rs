@@ -2,8 +2,5 @@
 #![doc = include_str!("../README.md")]
 
 pub mod coroutines;
-mod io;
+pub mod io;
 pub mod runtimes;
-
-#[doc(inline)]
-pub use self::io::{Io, Output};

@@ -1,66 +1,91 @@
-use crate::Io;
+//! I/O-free coroutine to read bytes into a buffer until it reaches
+//! EOF.
 
-use super::read::Read;
+use std::mem;
 
-/// I/O-free coroutine for reading bytes into a buffer until it
-/// reaches EOF.
-#[derive(Debug)]
-pub struct ReadToEnd {
-    /// The inner read coroutine.
-    read: Read,
+use log::trace;
+use thiserror::Error;
 
-    /// The buffer containing the read bytes.
-    buffer: Option<Vec<u8>>,
+use crate::io::StreamIo;
+
+use super::read::{ReadStream, ReadStreamError, ReadStreamResult};
+
+/// Errors that can occur during the coroutine progression.
+#[derive(Clone, Debug, Error)]
+pub enum ReadStreamToEndError {
+    /// Error from the [`Read`] coroutine.
+    #[error(transparent)]
+    Read(#[from] ReadStreamError),
 }
 
-impl ReadToEnd {
+/// Output emitted after a coroutine finishes its progression.
+#[derive(Clone, Debug)]
+pub enum ReadStreamToEndResult {
+    /// The coroutine has successfully terminated its progression.
+    Ok(Vec<u8>),
+
+    /// A stream I/O needs to be performed to make the coroutine
+    /// progress.
+    Io(StreamIo),
+
+    /// An error occured during the coroutine progression.
+    Err(ReadStreamToEndError),
+}
+
+/// I/O-free coroutine to read bytes into a buffer until it reaches
+/// EOF.
+#[derive(Debug)]
+pub struct ReadStreamToEnd {
+    /// The inner read coroutine.
+    read: ReadStream,
+
+    /// The buffer containing the read bytes.
+    buffer: Vec<u8>,
+}
+
+impl ReadStreamToEnd {
     /// Creates a new coroutine to read bytes using a buffer with
     /// [`Read::DEFAULT_CAPACITY`] capacity.
     ///
     /// See [`Self::with_capacity`] for a custom buffer capacity.
     pub fn new() -> Self {
-        Self::with_capacity(Read::DEFAULT_CAPACITY)
+        Self::with_capacity(ReadStream::DEFAULT_CAPACITY)
     }
 
     /// Creates a new coroutine to read bytes using a buffer with the
     /// given capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        let read = Read::with_capacity(capacity);
-        let buffer = Some(Vec::with_capacity(capacity));
+        trace!("init coroutine to read until EOF (capacity: {capacity})");
+        let read = ReadStream::with_capacity(capacity);
+        let buffer = Vec::with_capacity(capacity);
         Self { read, buffer }
     }
 
-    /// Adds the given bytes the to inner buffer.
+    /// Extends the inner buffer with the given bytes slice.
     pub fn extend(&mut self, bytes: impl IntoIterator<Item = u8>) {
-        let Some(buffer) = &mut self.buffer else {
-            self.buffer.replace(bytes.into_iter().collect());
-            return;
-        };
-
-        buffer.extend(bytes);
+        self.buffer.extend(bytes);
     }
 
-    /// Makes the read progress.
-    pub fn resume(&mut self, mut arg: Option<Io>) -> Result<Vec<u8>, Io> {
+    /// Makes the coroutine progress.
+    pub fn resume(&mut self, mut arg: Option<StreamIo>) -> ReadStreamToEndResult {
         loop {
-            let output = self.read.resume(arg.take())?;
-
-            let Some(buffer) = &mut self.buffer else {
-                break Err(Io::err("read to end buffer not ready"));
+            let output = match self.read.resume(arg.take()) {
+                ReadStreamResult::Ok(output) => output,
+                ReadStreamResult::Err(err) => break ReadStreamToEndResult::Err(err.into()),
+                ReadStreamResult::Io(io) => break ReadStreamToEndResult::Io(io),
+                ReadStreamResult::Eof => {
+                    let buffer = mem::take(&mut self.buffer);
+                    break ReadStreamToEndResult::Ok(buffer);
+                }
             };
 
-            if output.bytes_count == 0 {
-                // SAFETY: buffer exists due to check above
-                break Ok(self.buffer.take().unwrap());
-            }
-
-            buffer.extend(output.bytes());
+            self.buffer.extend(output.bytes());
             self.read.replace(output.buffer);
         }
     }
 }
 
-impl Default for ReadToEnd {
+impl Default for ReadStreamToEnd {
     fn default() -> Self {
         Self::new()
     }
@@ -70,9 +95,12 @@ impl Default for ReadToEnd {
 mod tests {
     use std::io::{BufReader, Read as _};
 
-    use crate::{Io, Output};
+    use crate::{
+        coroutines::read_to_end::ReadStreamToEndResult,
+        io::{StreamIo, StreamOutput},
+    };
 
-    use super::ReadToEnd;
+    use super::ReadStreamToEnd;
 
     #[test]
     fn read_to_end() {
@@ -80,21 +108,21 @@ mod tests {
 
         let mut reader = BufReader::new("abcdef".as_bytes());
 
-        let mut read = ReadToEnd::with_capacity(4);
+        let mut read = ReadStreamToEnd::with_capacity(4);
         let mut arg = None;
 
         let output = loop {
             match read.resume(arg.take()) {
-                Ok(output) => break output,
-                Err(Io::Read(Err(mut buffer))) => {
+                ReadStreamToEndResult::Ok(output) => break output,
+                ReadStreamToEndResult::Io(StreamIo::Read(Err(mut buffer))) => {
                     let bytes_count = reader.read(&mut buffer).unwrap();
-                    let output = Output {
+                    let output = StreamOutput {
                         buffer,
                         bytes_count,
                     };
-                    arg = Some(Io::Read(Ok(output)))
+                    arg = Some(StreamIo::Read(Ok(output)))
                 }
-                Err(io) => unreachable!("unexpected I/O: {io:?}"),
+                other => unreachable!("Unexpected result: {other:?}"),
             }
         };
 

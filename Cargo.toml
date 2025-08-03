@@ -5,7 +5,7 @@ version = "0.0.1"
 authors = ["soywod <clement.douin@posteo.net>"]
 rust-version = "1.56"
 edition = "2021"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 categories = ["api-bindings"]
 keywords = ["io-free", "coroutine", "runtime", "stream", "read-write"]
 homepage = "https://pimalaya.org"
@@ -24,7 +24,7 @@ tokio = ["dep:tokio"]
 [dev-dependencies]
 env_logger = "0.11"
 memchr = "2.7"
-rustls = "0.23"
+rustls = { version = "0.23", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-platform-verifier = "0.5"
 tokio = { version = "1", features = ["full"] }
 url = "2.5"
@@ -32,4 +32,5 @@ uuid = { version = "1", features = ["v4"] }
 
 [dependencies]
 log = "0.4"
+thiserror = "2"
 tokio = { version = "1", default-features = false, features = ["io-util"], optional = true }

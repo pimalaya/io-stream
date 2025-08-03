@@ -3,7 +3,10 @@
 use std::env;
 
 use io_stream::{
-    coroutines::{Read, Write},
+    coroutines::{
+        read::{ReadStream, ReadStreamResult},
+        write::{WriteStream, WriteStreamResult},
+    },
     runtimes::tokio::handle,
 };
 use tokio::{
@@ -35,12 +38,14 @@ async fn main() {
     stdout.write(b"\nReceived greeting:\n").await.unwrap();
 
     let mut arg = None;
-    let mut read = Read::new();
+    let mut read = ReadStream::new();
 
     let greeting = loop {
         match read.resume(arg) {
-            Ok(output) => break output,
-            Err(io) => arg = Some(handle(&mut tcp, io).await.unwrap()),
+            ReadStreamResult::Ok(output) => break output,
+            ReadStreamResult::Err(err) => panic!("{err}"),
+            ReadStreamResult::Eof => panic!("reached unexpected EOF"),
+            ReadStreamResult::Io(io) => arg = Some(handle(&mut tcp, io).await.unwrap()),
         }
     };
 
@@ -59,19 +64,26 @@ async fn main() {
         data.push_str("\r\n");
 
         let mut arg = None;
-        let mut write = Write::new(data.into_bytes());
+        let mut write = WriteStream::new(data.into_bytes());
 
-        while let Err(io) = write.resume(arg) {
-            arg = Some(handle(&mut tcp, io).await.unwrap());
+        loop {
+            match write.resume(arg) {
+                WriteStreamResult::Ok(_) => break,
+                WriteStreamResult::Err(err) => panic!("{err}"),
+                WriteStreamResult::Eof => panic!("reached unexpected EOF"),
+                WriteStreamResult::Io(io) => arg = Some(handle(&mut tcp, io).await.unwrap()),
+            }
         }
 
         let mut arg = None;
-        let mut read = Read::new();
+        let mut read = ReadStream::new();
 
         let response = loop {
             match read.resume(arg) {
-                Ok(output) => break output,
-                Err(io) => arg = Some(handle(&mut tcp, io).await.unwrap()),
+                ReadStreamResult::Ok(output) => break output,
+                ReadStreamResult::Err(err) => panic!("{err}"),
+                ReadStreamResult::Eof => panic!("reached unexpected EOF"),
+                ReadStreamResult::Io(io) => arg = Some(handle(&mut tcp, io).await.unwrap()),
             }
         };
 

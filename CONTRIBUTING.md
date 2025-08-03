@@ -1,6 +1,6 @@
 # Contributing guide
 
-Thank you for investing your time in contributing to the streams project!
+Thank you for investing your time in contributing to the I/O Stream project.
 
 ## Development
 
@@ -34,4 +34,4 @@ cargo build --no-default-features --features std --release
 
 ## Commit style
 
-Streams follow the [conventional commits specification](https://www.conventionalcommits.org/en/v1.0.0/#summary).
+I/O Stream follow the [conventional commits specification](https://www.conventionalcommits.org/en/v1.0.0/#summary).

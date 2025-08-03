@@ -1,60 +1,62 @@
-//! Module dedicated to the Tokio-based, async runtime.
+//! The Tokio-based, async stream runtime.
 
 use std::io;
 
 use log::trace;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::{Io, Output};
+use crate::io::{StreamIo, StreamOutput};
 
-/// The main runtime I/O handler.
+/// The Tokio-based, async stream runtime handler.
 ///
-/// This handler makes use of the [`tokio::io`] module as well as
-/// standard module [`std::io`] to process stream [`Io`].
-pub async fn handle(stream: impl AsyncRead + AsyncWrite + Unpin, io: Io) -> io::Result<Io> {
+/// This handler makes use of standard module [`std::io`] and Tokio
+/// module [`tokio::io`] to process [`StreamIo`].
+pub async fn handle(
+    stream: impl AsyncRead + AsyncWrite + Unpin,
+    io: StreamIo,
+) -> io::Result<StreamIo> {
     match io {
-        Io::Error(err) => Err(io::Error::new(io::ErrorKind::Other, err)),
-        Io::Read(io) => read(stream, io).await,
-        Io::Write(io) => write(stream, io).await,
+        StreamIo::Read(io) => read(stream, io).await,
+        StreamIo::Write(io) => write(stream, io).await,
     }
 }
 
 pub async fn read(
     mut stream: impl AsyncRead + Unpin,
-    input: Result<Output, Vec<u8>>,
-) -> io::Result<Io> {
-    let Err(mut buffer) = input else {
-        let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "Missing read buffer"));
+    input: Result<StreamOutput, Vec<u8>>,
+) -> io::Result<StreamIo> {
+    let mut buffer = match input {
+        Ok(output) => return Ok(StreamIo::Read(Ok(output))),
+        Err(buffer) => buffer,
     };
 
     trace!("reading bytes asynchronously");
     let bytes_count = stream.read(&mut buffer).await?;
 
-    let output = Output {
+    let output = StreamOutput {
         buffer,
         bytes_count,
     };
 
-    Ok(Io::Read(Ok(output)))
+    Ok(StreamIo::Read(Ok(output)))
 }
 
 pub async fn write(
     mut stream: impl AsyncWrite + Unpin,
-    input: Result<Output, Vec<u8>>,
-) -> io::Result<Io> {
-    let Err(buffer) = input else {
-        let kind = io::ErrorKind::InvalidInput;
-        return Err(io::Error::new(kind, "Missing write bytes"));
+    input: Result<StreamOutput, Vec<u8>>,
+) -> io::Result<StreamIo> {
+    let bytes = match input {
+        Ok(output) => return Ok(StreamIo::Write(Ok(output))),
+        Err(bytes) => bytes,
     };
 
     trace!("writing bytes asynchronously");
-    let bytes_count = stream.write(&buffer).await?;
+    let bytes_count = stream.write(&bytes).await?;
 
-    let output = Output {
-        buffer,
+    let output = StreamOutput {
+        buffer: bytes,
         bytes_count,
     };
 
-    Ok(Io::Write(Ok(output)))
+    Ok(StreamIo::Write(Ok(output)))
 }

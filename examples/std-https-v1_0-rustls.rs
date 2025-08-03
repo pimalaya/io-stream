@@ -8,7 +8,10 @@ use std::{
 };
 
 use io_stream::{
-    coroutines::{Read, Write},
+    coroutines::{
+        read::{ReadStream, ReadStreamResult},
+        write::{WriteStream, WriteStreamResult},
+    },
     runtimes::std::handle,
 };
 use memchr::memmem;
@@ -36,22 +39,29 @@ fn main() {
     println!("request: {request:?}");
 
     let mut arg = None;
-    let mut write = Write::new(request.into_bytes());
+    let mut write = WriteStream::new(request.into_bytes());
 
-    while let Err(io) = write.resume(arg) {
-        arg = Some(handle(&mut stream, io).unwrap());
+    loop {
+        match write.resume(arg) {
+            WriteStreamResult::Ok(_) => break,
+            WriteStreamResult::Err(err) => panic!("{err}"),
+            WriteStreamResult::Eof => panic!("reached unexpected EOF"),
+            WriteStreamResult::Io(io) => arg = Some(handle(&mut stream, io).unwrap()),
+        }
     }
 
     let mut response = Vec::new();
 
     loop {
         let mut arg = None;
-        let mut read = Read::new();
+        let mut read = ReadStream::new();
 
         let output = loop {
             match read.resume(arg) {
-                Ok(output) => break output,
-                Err(io) => arg = Some(handle(&mut stream, io).unwrap()),
+                ReadStreamResult::Ok(output) => break output,
+                ReadStreamResult::Err(err) => panic!("{err}"),
+                ReadStreamResult::Eof => panic!("reached unexpected EOF"),
+                ReadStreamResult::Io(io) => arg = Some(handle(&mut stream, io).unwrap()),
             }
         };
 

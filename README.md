@@ -22,8 +22,6 @@ The loop is the glue between coroutines and runtimes. It makes the coroutine pro
 
 ## Examples
 
-*See complete examples at [./examples](https://github.com/pimalaya/io-stream/blob/master/examples).*
-
 ### Read stdin synchronously
 
 ```rust,ignore
@@ -61,18 +59,30 @@ while let Err(io) = write.resume(arg) {
 }
 ```
 
-### More examples
+*See complete examples at [./examples](https://github.com/pimalaya/io-stream/blob/master/examples).*
+
+## More examples
 
 Have a look at projects built on the top of this library:
 
-- [io-starttls](https://github.com/pimalaya/io-starttls): I/O-free coroutine to upgrade any plain stream to a secure one
-- [io-timer](https://github.com/pimalaya/io-timer): Set of I/O-free coroutines to manage timers
+- [io-addressbook](https://github.com/pimalaya/io-addressbook): Set of I/O-free coroutines to manage contacts
 - [io-http](https://github.com/pimalaya/io-http): Set of I/O-free Rust coroutines to manage HTTP streams
 - [io-oauth](https://github.com/pimalaya/io-oauth): Set of I/O-free Rust coroutines to manage OAuth flows
-- [io-addressbook](https://github.com/pimalaya/io-addressbook): Set of I/O-free coroutines to manage contacts
-- [comodoro](https://github.com/pimalaya/comodoro): CLI to manage timers
-- [cardamum](https://github.com/pimalaya/cardamum): CLI to manage contacts
-- [ortie](https://github.com/pimalaya/ortie): CLI to manage OAuth access tokens
+- [io-starttls](https://github.com/pimalaya/io-starttls): I/O-free coroutine to upgrade any plain stream to a secure one
+- [io-timer](https://github.com/pimalaya/io-timer): Set of I/O-free coroutines to manage timers
+
+- [Cardamum](https://github.com/pimalaya/cardamum): CLI to manage contacts
+- [Comodoro](https://github.com/pimalaya/comodoro): CLI to manage timers
+- [Ortie](https://github.com/pimalaya/ortie): CLI to manage OAuth access tokens
+
+## License
+
+This project is licensed under either of:
+
+- [MIT license](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
 
 ## Sponsoring
 
